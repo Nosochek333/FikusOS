@@ -1,0 +1,270 @@
+import os
+import sys
+import time
+import hashlib
+import json
+from functools import wraps
+from getpass import getpass
+
+# Проверка наличия colorama и установка заглушки если нет
+try:
+    from colorama import Fore, Style, init
+    init(autoreset=True)
+except ImportError:
+    class ColorStub:
+        def __getattr__(self, name):
+            return ""
+    Fore = Style = ColorStub()
+
+class AddaOS:
+    def __init__(self):
+        self.system = "FikusOS"
+        self.version = 2.0
+        self.username = None
+        self.password_hash = None
+        self.max_login_attempts = 3
+        self.commands = {
+            'help': self.show_help,
+            'ls': self.list_files,
+            'create_file': self.create_file,
+            'home': self.go_home,
+            'open': self.open_file_or_dir,
+            'record': self.write_file,
+            'format': self.delete_file,
+            'delete': self.delete_file,
+            'pwd': self.show_current_dir,
+            'mkdir': self.make_dir,
+            'clear': self.clear_screen,
+            'whoami': self.show_user,
+            'change_pass': self.change_password,
+            'cd': self.change_dir
+        }
+        self.user_data_file = ".user_config"
+        self.log_file = "system.log"
+    
+    @staticmethod
+    def command_handler(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            try:
+                return func(self, *args, **kwargs)
+            except Exception as e:
+                self.log(f"Ошибка в команде {func.__name__}: {str(e)}", "ERROR")
+                print(Fore.RED + f"Ошибка: {str(e)}")
+        return wrapper
+    
+    def log(self, message, level="INFO"):
+        with open(self.log_file, "a") as f:
+            timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+            f.write(f"[{timestamp}] {level}: {message}\n")
+    
+    def hash_password(self, password):
+        return hashlib.sha256(password.encode()).hexdigest()
+    
+    def load_user_data(self):
+        if os.path.exists(self.user_data_file):
+            try:
+                with open(self.user_data_file, "r") as f:
+                    data = json.load(f)
+                    return data['username'], data['password_hash']
+            except Exception as e:
+                self.log(f"Ошибка загрузки данных: {str(e)}", "ERROR")
+        return None, None
+    
+    def save_user_data(self):
+        data = {
+            'username': self.username,
+            'password_hash': self.password_hash
+        }
+        with open(self.user_data_file, "w") as f:
+            json.dump(data, f)
+    
+    def show_loading(self):
+        print(Fore.CYAN + "\nИнициализация ядра системы...")
+        symbols = ['⣾', '⣽', '⣻', '⢿', '⡿', '⣟', '⣯', '⣷']
+        for i in range(20):
+            time.sleep(0.1)
+            sys.stdout.write(Fore.YELLOW + "\r" + symbols[i % len(symbols)] + " Загрузка модулей...")
+            sys.stdout.flush()
+        print(Fore.GREEN + "\n\nСистема готова к работе!" + Style.RESET_ALL)
+    
+    def login(self):
+        self.username, stored_hash = self.load_user_data()
+        if not self.username:
+            self.register_user()
+            return True
+        
+        attempts = 0
+        while attempts < self.max_login_attempts:
+            password = getpass(Fore.BLUE + "Введите пароль: " + Style.RESET_ALL)
+            if self.hash_password(password) == stored_hash:
+                print(Fore.GREEN + "✓ Аутентификация успешна!")
+                return True
+            attempts += 1
+            print(Fore.RED + f"Неверный пароль! Осталось попыток: {self.max_login_attempts - attempts}")
+        
+        print(Fore.RED + "Превышено количество попыток. Система заблокирована.")
+        self.log("Неудачные попытки входа", "SECURITY")
+        return False
+    
+    def register_user(self):
+        print(Fore.CYAN + "\nРегистрация нового пользователя")
+        self.username = input("Введите имя пользователя: ")
+        while True:
+            password = getpass("Введите пароль: ")
+            confirm = getpass("Повторите пароль: ")
+            if password == confirm:
+                self.password_hash = self.hash_password(password)
+                self.save_user_data()
+                print(Fore.GREEN + "✓ Пользователь зарегистрирован!")
+                return
+            print(Fore.RED + "Пароли не совпадают!")
+
+    @command_handler
+    def change_password(self):
+        old_pass = getpass("Старый пароль: ")
+        if self.hash_password(old_pass) != self.password_hash:
+            print(Fore.RED + "Неверный пароль!")
+            return
+        
+        new_pass = getpass("Новый пароль: ")
+        confirm = getpass("Подтвердите пароль: ")
+        if new_pass == confirm:
+            self.password_hash = self.hash_password(new_pass)
+            self.save_user_data()
+            print(Fore.GREEN + "✓ Пароль изменен!")
+        else:
+            print(Fore.RED + "Пароли не совпадают!")
+
+    @command_handler
+    def list_files(self):
+        files = os.listdir()
+        for f in files:
+            color = Fore.BLUE if os.path.isdir(f) else Fore.WHITE
+            print(color + f"• {f}")
+    
+    @command_handler
+    def create_file(self, filename):
+        if os.path.exists(filename):
+            raise Exception(f"Файл '{filename}' уже существует")
+        with open(filename, 'w'):
+            pass
+        print(Fore.GREEN + f"Файл '{filename}' создан")
+    
+    @command_handler
+    def go_home(self):
+        os.chdir(os.path.dirname(os.path.abspath(__file__)))
+        print(Fore.CYAN + "Домашняя директория")
+    
+    @command_handler
+    def open_file_or_dir(self, target):
+        if not os.path.exists(target):
+            raise Exception(f"'{target}' не существует")
+        
+        if os.path.isdir(target):
+            os.chdir(target)
+            print(Fore.BLUE + f"Директория: {os.getcwd()}")
+        else:
+            with open(target, 'r') as f:
+                content = f.read()
+                print(Fore.WHITE + f"\nСодержимое файла:\n{content}")
+    
+    @command_handler
+    def write_file(self, filename, *text):
+        text = ' '.join(text)
+        with open(filename, 'a') as f:
+            f.write(text + '\n')
+        print(Fore.GREEN + f"Данные записаны в '{filename}'")
+    
+    @command_handler
+    def delete_file(self, filename):
+        if not os.path.exists(filename):
+            raise Exception(f"'{filename}' не существует")
+        os.remove(filename)
+        print(Fore.RED + f"Файл '{filename}' удален")
+    
+    @command_handler
+    def show_current_dir(self):
+        print(Fore.CYAN + f"Текущая директория: {os.getcwd()}")
+    
+    @command_handler
+    def make_dir(self, dirname):
+        if os.path.exists(dirname):
+            raise Exception(f"Директория '{dirname}' уже существует")
+        os.makedirs(dirname)
+        print(Fore.GREEN + f"Директория '{dirname}' создана")
+    
+    @command_handler
+    def clear_screen(self):
+        os.system('cls' if os.name == 'nt' else 'clear')
+    
+    @command_handler
+    def show_user(self):
+        print(Fore.MAGENTA + f"Текущий пользователь: {self.username}")
+    
+    @command_handler
+    def change_dir(self, path):
+        if path == "..":
+            os.chdir("..")
+        else:
+            if not os.path.exists(path):
+                raise Exception(f"Путь '{path}' не существует")
+            os.chdir(path)
+        print(Fore.BLUE + f"Текущая директория: {os.getcwd()}")
+    
+    def show_help(self):
+        help_text = Fore.YELLOW + """
+        Доступные команды:
+        help - показать это сообщение
+        ls - список файлов и директорий
+        create_file <имя> - создать файл
+        home - вернуться в домашнюю директорию
+        open <имя> - открыть файл или директорию
+        record <файл> <текст> - записать в файл
+        format/delete <файл> - удалить файл
+        pwd - текущая директория
+        mkdir <имя> - создать директорию
+        clear - очистить экран
+        whoami - текущий пользователь
+        change_pass - сменить пароль
+        cd <путь> - сменить директорию
+        exit - выход из системы
+        """
+        print(help_text)
+    
+    def run(self):
+        print(Fore.CYAN + f"\nДобро пожаловать в {self.system} v{self.version}")
+        self.show_loading()
+        
+        if not self.login():
+            return
+        
+        print(Fore.MAGENTA + f"\nДобро пожаловать, {self.username}!")
+        self.show_help()
+        
+        while True:
+            try:
+                cmd = input(Fore.WHITE + "\n>> ").strip().split()
+                if not cmd:
+                    continue
+                
+                if cmd[0] == 'exit':
+                    print(Fore.CYAN + "Завершение работы...")
+                    break
+                
+                if cmd[0] in self.commands:
+                    self.commands[cmd[0]](*cmd[1:])
+                else:
+                    print(Fore.RED + "Неизвестная команда. Введите help для списка команд.")
+            
+            except KeyboardInterrupt:
+                print(Fore.RED + "\nПрервано пользователем")
+                break
+            
+            except Exception as e:
+                print(Fore.RED + f"Ошибка: {str(e)}")
+
+if __name__ == "__main__":
+    os.system('')  # Включаем поддержку ANSI-кодов для Windows
+    os_instance = AddaOS()
+    os_instance.run()
